@@ -44,17 +44,22 @@ CREATE TABLE customers (
 );
 
 -- 4. SERVICES
+-- Status: 'scheduled' (default), 'pending', 'completed', 'rejected', 'followup'
+-- UI auto-classifies 'scheduled' as Upcoming (future) or Due (past) based on scheduled_date
 CREATE TABLE services (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id),
   customer_id UUID NOT NULL REFERENCES customers(id),
   service_type TEXT NOT NULL,
-  status TEXT DEFAULT 'upcoming',
+  status TEXT DEFAULT 'scheduled',
   scheduled_date DATE NOT NULL,
   completed_date DATE,
   next_due_date DATE,
+  next_contact_date DATE,
   assigned_to UUID REFERENCES users(id),
   amount NUMERIC(10,2) DEFAULT 0,
+  service_charge NUMERIC(10,2) DEFAULT 0,
+  parts_replaced JSONB DEFAULT '[]',
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );

@@ -16,7 +16,7 @@ function startDueDateCron() {
       const { data: services } = await supabaseAdmin
         .from("services")
         .select("*, customers(name, phone, fcm_token), tenants(business_name)")
-        .in("status", ["upcoming", "pending"])
+        .in("status", ["scheduled", "pending"])
         .eq("scheduled_date", tomorrow);
 
       if (!services || services.length === 0) return;
