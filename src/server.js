@@ -22,6 +22,10 @@ app.get("/api/health", (req, res) => {
 
 // Start cron jobs (skip in mock mode - no Firebase)
 const useMock = !process.env.SUPABASE_URL || process.env.USE_MOCK_DATA === "true";
+if (useMock) {
+  app.use("/api/dev", require("./routes/devRoutes"));
+}
+
 if (!useMock) {
   const { startDueDateCron } = require("./cron/dueDateReminder");
   startDueDateCron();

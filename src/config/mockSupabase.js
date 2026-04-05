@@ -37,6 +37,22 @@ function resolveJoins(record, joins, foreignKeyMap) {
     if (result[joinTable] && typeof result[joinTable] === "object") {
       continue;
     }
+    // Handle reverse relations like bills -> bill_items(*)
+    if (joinTable === "bill_items" && record.id && tables.bill_items) {
+      const relatedRows = tables.bill_items.filter((row) => row.bill_id === record.id);
+      result[joinTable] = relatedRows.map((related) => {
+        if (fields.length === 1 && fields[0] === "*") {
+          return clone(related);
+        }
+
+        const joinData = {};
+        for (const field of fields) {
+          joinData[field] = related[field];
+        }
+        return joinData;
+      });
+      continue;
+    }
     // Otherwise try to resolve from tables
     const fk = foreignKeyMap[joinTable] || `${joinTable.replace(/s$/, "")}_id`;
     const fkValue = result[fk];
@@ -231,7 +247,12 @@ class MockQueryBuilder {
 
     // Resolve joins
     if (Object.keys(this._joins).length > 0) {
-      data = data.map((row) => resolveJoins(row, this._joins, { customers: "customer_id" }));
+      data = data.map((row) =>
+        resolveJoins(row, this._joins, {
+          customers: "customer_id",
+          tenants: "tenant_id",
+        })
+      );
     }
 
     // Head mode returns no data
