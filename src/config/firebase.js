@@ -1,11 +1,32 @@
 const admin = require("firebase-admin");
 
-// Initialize Firebase Admin SDK
-// Place your firebase-service-account.json in the backend root
-const serviceAccount = require("../../firebase-service-account.json");
+let firebaseAdmin = null;
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+function getFirebaseAdmin() {
+  if (firebaseAdmin) {
+    return firebaseAdmin;
+  }
 
-module.exports = admin;
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+
+  if (!projectId || !clientEmail || !privateKey) {
+    return null;
+  }
+
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId,
+        clientEmail,
+        privateKey,
+      }),
+    });
+  }
+
+  firebaseAdmin = admin;
+  return firebaseAdmin;
+}
+
+module.exports = { getFirebaseAdmin };

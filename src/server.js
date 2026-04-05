@@ -1,11 +1,24 @@
 require("dotenv").config();
 const express = require("express");
-const cors = require("cors");
 
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+  );
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.header("Access-Control-Allow-Credentials", "true");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
 app.use(express.json());
 
 // Routes
@@ -17,21 +30,23 @@ app.use("/api/dashboard", require("./routes/dashboardRoutes"));
 
 // Health check
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    supabase_configured: true,
+  });
 });
 
-// Start cron jobs (skip in mock mode - no Firebase)
-const useMock = !process.env.SUPABASE_URL || process.env.USE_MOCK_DATA === "true";
-if (useMock) {
-  app.use("/api/dev", require("./routes/devRoutes"));
-}
+const { startDueDateCron } = require("./cron/dueDateReminder");
+startDueDateCron();
 
-if (!useMock) {
-  const { startDueDateCron } = require("./cron/dueDateReminder");
-  startDueDateCron();
-} else {
-  console.log("Skipping cron jobs in mock mode.");
-}
+app.use((err, req, res, next) => {
+  console.error("Unhandled server error:", err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(500).json({ error: err.message || "Internal server error" });
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

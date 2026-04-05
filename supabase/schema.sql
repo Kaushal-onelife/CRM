@@ -3,6 +3,8 @@
 -- Run this in Supabase SQL Editor
 -- ============================================
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- 1. TENANTS (each business/client)
 CREATE TABLE tenants (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -120,6 +122,8 @@ ALTER TABLE services ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bill_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
 
 -- Tenant isolation policies
 CREATE POLICY tenant_isolation ON customers
@@ -136,3 +140,13 @@ CREATE POLICY tenant_isolation ON notifications
 
 CREATE POLICY tenant_isolation ON bill_items
   FOR ALL USING (bill_id IN (SELECT id FROM bills));
+
+CREATE POLICY user_can_read_own_profile ON users
+  FOR SELECT USING (id = auth.uid());
+
+CREATE POLICY user_can_update_own_profile ON users
+  FOR UPDATE USING (id = auth.uid())
+  WITH CHECK (id = auth.uid());
+
+CREATE POLICY user_can_read_own_tenant ON tenants
+  FOR SELECT USING (id = (SELECT tenant_id FROM users WHERE id = auth.uid()));

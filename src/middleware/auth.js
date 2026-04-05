@@ -1,22 +1,6 @@
 const { supabaseAdmin } = require("../config/supabase");
 
-const useMock = !process.env.SUPABASE_URL || process.env.USE_MOCK_DATA === "true";
-
 async function authenticate(req, res, next) {
-  // In mock mode, inject a fake user and skip token validation
-  if (useMock) {
-    const { TENANT_ID, USER_ID } = require("../config/mockData");
-    req.user = {
-      id: USER_ID,
-      tenant_id: TENANT_ID,
-      name: "Kaushal Patil",
-      role: "owner",
-      email: "kaushal@aquapure.com",
-    };
-    req.accessToken = "mock-token-12345";
-    return next();
-  }
-
   const token = req.headers.authorization?.replace("Bearer ", "");
 
   if (!token) {

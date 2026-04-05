@@ -105,13 +105,13 @@ async function getDashboard(req, res) {
         pending_services: pendingServices.count || 0,
         followup_services: followupServices.count || 0,
         completed_this_month: completedServices.count || 0,
-        due_count: overdueServices.count || 0,
+        overdue_count: overdueServices.count || 0,
         monthly_revenue: monthlyRevenue,
         total_unpaid: totalUnpaid,
       },
       today_services: todayServices.data || [],
       upcoming_services: upcomingServices.data || [],
-      due_services: overdueServices.data || [],
+      overdue_services: overdueServices.data || [],
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

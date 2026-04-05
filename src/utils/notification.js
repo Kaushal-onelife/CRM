@@ -1,11 +1,20 @@
-const admin = require("../config/firebase");
+const { getFirebaseAdmin } = require("../config/firebase");
 const { supabaseAdmin } = require("../config/supabase");
 
 async function sendPushNotification(fcmToken, title, body) {
   if (!fcmToken) return null;
 
   try {
-    const result = await admin.messaging().send({
+    const firebaseAdmin = getFirebaseAdmin();
+
+    if (!firebaseAdmin) {
+      console.warn(
+        "Skipping push notification because Firebase Admin credentials are not configured."
+      );
+      return null;
+    }
+
+    const result = await firebaseAdmin.messaging().send({
       token: fcmToken,
       notification: { title, body },
     });

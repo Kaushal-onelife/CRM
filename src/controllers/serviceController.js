@@ -98,60 +98,86 @@ async function update(req, res) {
 }
 
 async function markCompleted(req, res) {
-  const { tenant_id } = req.user;
-  const {
-    next_due_date,
-    service_charge,
-    parts_replaced,
-    notes,
-    payment_status,
-    payment_method,
-  } = req.body;
+  try {
+    const { tenant_id } = req.user;
+    const {
+      next_due_date,
+      service_charge,
+      parts_replaced,
+      notes,
+      payment_status,
+      payment_method,
+    } = req.body;
 
-  // Calculate total amount from service charge + parts
-  const partsTotal = (parts_replaced || []).reduce(
-    (sum, part) => sum + (parseFloat(part.cost) || 0) * (parseInt(part.quantity) || 1),
-    0
-  );
-  const totalAmount = (parseFloat(service_charge) || 0) + partsTotal;
+    console.log("complete payload:", req.body);
+    console.log("complete service id:", req.params.id);
+    console.log("complete user:", req.user);
 
-  const { data, error } = await supabaseAdmin
-    .from("services")
-    .update({
-      status: "completed",
-      completed_date: new Date().toISOString().split("T")[0],
-      next_due_date: next_due_date || null,
+    const normalizedParts = Array.isArray(parts_replaced) ? parts_replaced : [];
+    console.log("normalized parts:", normalizedParts);
+
+    // Calculate total amount from service charge + parts
+    const partsTotal = normalizedParts.reduce(
+      (sum, part) =>
+        sum +
+        (parseFloat(part.cost) || 0) * (parseInt(part.quantity, 10) || 1),
+      0
+    );
+    const totalAmount = (parseFloat(service_charge) || 0) + partsTotal;
+
+    const { data, error } = await supabaseAdmin
+      .from("services")
+      .update({
+        status: "completed",
+        completed_date: new Date().toISOString().split("T")[0],
+        next_due_date: next_due_date || null,
+        amount: totalAmount,
+        service_charge: parseFloat(service_charge) || 0,
+        parts_replaced: normalizedParts,
+        notes,
+      })
+      .eq("id", req.params.id)
+      .eq("tenant_id", tenant_id)
+      .select("*, customers(name, phone, address)")
+      .single();
+
+    console.log("service update result:", { data, error });
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    // If next_due_date provided, create the next service automatically
+    if (next_due_date) {
+      const { error: nextServiceError } = await supabaseAdmin
+        .from("services")
+        .insert({
+          tenant_id,
+          customer_id: data.customer_id,
+          service_type: data.service_type,
+          status: "scheduled",
+          scheduled_date: next_due_date,
+        });
+
+      console.log("next service insert result:", { error: nextServiceError });
+
+      if (nextServiceError) {
+        return res.status(400).json({ error: nextServiceError.message });
+      }
+    }
+
+    res.json({
+      service: data,
       amount: totalAmount,
       service_charge: parseFloat(service_charge) || 0,
-      parts_replaced: parts_replaced || [],
-      notes,
-    })
-    .eq("id", req.params.id)
-    .eq("tenant_id", tenant_id)
-    .select("*, customers(name, phone, address)")
-    .single();
-
-  if (error) return res.status(400).json({ error: error.message });
-
-  // If next_due_date provided, create the next service automatically
-  if (next_due_date) {
-    await supabaseAdmin.from("services").insert({
-      tenant_id,
-      customer_id: data.customer_id,
-      service_type: data.service_type,
-      status: "scheduled",
-      scheduled_date: next_due_date,
+      parts_total: partsTotal,
+      payment_status: payment_status || "unpaid",
+      payment_method: payment_method || null,
     });
+  } catch (error) {
+    console.error("markCompleted error:", error);
+    res.status(500).json({ error: error.message || "Failed to complete service" });
   }
-
-  res.json({
-    service: data,
-    amount: totalAmount,
-    service_charge: parseFloat(service_charge) || 0,
-    parts_total: partsTotal,
-    payment_status: payment_status || "unpaid",
-    payment_method: payment_method || null,
-  });
 }
 
 // Auto-generate bill from completed service data
