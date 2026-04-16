@@ -16,6 +16,8 @@ async function getDashboard(req, res) {
       unpaidBills,
       revenueData,
       todayServices,
+      activeAmcContracts,
+      expiringAmcContracts,
     ] = await Promise.all([
       // Total customers
       supabaseAdmin
@@ -88,6 +90,24 @@ async function getDashboard(req, res) {
         .eq("tenant_id", tenant_id)
         .eq("scheduled_date", today)
         .order("status", { ascending: true }),
+
+      // Active AMC contracts
+      supabaseAdmin
+        .from("amc_contracts")
+        .select("*", { count: "exact", head: true })
+        .eq("tenant_id", tenant_id)
+        .eq("status", "active"),
+
+      // AMC contracts expiring in 30 days
+      supabaseAdmin
+        .from("amc_contracts")
+        .select("*, customers(name, phone)", { count: "exact" })
+        .eq("tenant_id", tenant_id)
+        .eq("status", "active")
+        .lte("end_date", new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0])
+        .gte("end_date", today)
+        .order("end_date", { ascending: true })
+        .limit(5),
     ]);
 
     const totalUnpaid = (unpaidBills.data || []).reduce(
@@ -108,10 +128,13 @@ async function getDashboard(req, res) {
         overdue_count: overdueServices.count || 0,
         monthly_revenue: monthlyRevenue,
         total_unpaid: totalUnpaid,
+        active_amc: activeAmcContracts.count || 0,
+        expiring_amc: expiringAmcContracts.count || 0,
       },
       today_services: todayServices.data || [],
       upcoming_services: upcomingServices.data || [],
       overdue_services: overdueServices.data || [],
+      expiring_amc_contracts: expiringAmcContracts.data || [],
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

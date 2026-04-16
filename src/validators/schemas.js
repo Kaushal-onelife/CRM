@@ -101,6 +101,47 @@ const markPaidSchema = z.object({
   }),
 });
 
+// ── AMC Contracts ────────────────────────────────────
+const createAmcSchema = z.object({
+  customer_id: z.string().uuid("Invalid customer ID"),
+  plan_name: z.string().min(1, "Plan name is required"),
+  start_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Start date must be YYYY-MM-DD format"),
+  end_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "End date must be YYYY-MM-DD format"),
+  total_services: z.number().int().min(1, "Must include at least 1 service").optional().default(4),
+  amount: z.number().min(0, "Amount cannot be negative").optional().default(0),
+  notes: z.string().optional().or(z.literal("")),
+  auto_schedule: z.boolean().optional().default(true),
+});
+
+const updateAmcSchema = z.object({
+  plan_name: z.string().min(1).optional(),
+  end_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  total_services: z.number().int().min(1).optional(),
+  amount: z.number().min(0).optional(),
+  payment_status: z.enum(["unpaid", "partial", "paid"]).optional(),
+  status: z.enum(["active", "expired", "cancelled"]).optional(),
+  notes: z.string().optional(),
+});
+
+// ── Parts Inventory ──────────────────────────────────
+const createPartSchema = z.object({
+  name: z.string().min(1, "Part name is required"),
+  sku: z.string().optional().or(z.literal("")),
+  quantity: z.number().int().min(0, "Quantity cannot be negative").optional().default(0),
+  min_stock: z.number().int().min(0).optional().default(5),
+  unit_price: z.number().min(0, "Price cannot be negative").optional().default(0),
+  cost_price: z.number().min(0, "Cost cannot be negative").optional().default(0),
+});
+
+const updatePartSchema = createPartSchema.partial();
+
 module.exports = {
   signupSchema,
   loginSchema,
@@ -111,4 +152,8 @@ module.exports = {
   completeServiceSchema,
   createBillSchema,
   markPaidSchema,
+  createAmcSchema,
+  updateAmcSchema,
+  createPartSchema,
+  updatePartSchema,
 };
