@@ -1,7 +1,27 @@
 require("dotenv").config();
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 
 const app = express();
+
+// Rate limiting
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200, // 200 requests per window
+  message: { error: "Too many requests, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 15, // 15 login/signup attempts per window
+  message: { error: "Too many auth attempts, please try again after 15 minutes" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(generalLimiter);
 
 // Middleware
 app.use((req, res, next) => {
@@ -22,7 +42,7 @@ app.use((req, res, next) => {
 app.use(express.json());
 
 // Routes
-app.use("/api/auth", require("./routes/authRoutes"));
+app.use("/api/auth", authLimiter, require("./routes/authRoutes"));
 app.use("/api/customers", require("./routes/customerRoutes"));
 app.use("/api/services", require("./routes/serviceRoutes"));
 app.use("/api/bills", require("./routes/billRoutes"));
