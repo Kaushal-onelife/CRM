@@ -3,6 +3,7 @@ const { supabaseAdmin } = require("../config/supabase");
 
 async function sendPushNotification(fcmToken, title, body) {
   if (!fcmToken) return null;
+  if (!admin.isInitialized || !admin.isInitialized()) return null;
 
   try {
     const result = await admin.messaging().send({
@@ -25,15 +26,20 @@ async function logNotification({
   body,
   status = "sent",
 }) {
-  await supabaseAdmin.from("notifications").insert({
-    tenant_id,
-    customer_id,
-    service_id,
-    type,
-    title,
-    body,
-    status,
-  });
+  try {
+    const { error } = await supabaseAdmin.from("notifications").insert({
+      tenant_id,
+      customer_id,
+      service_id,
+      type,
+      title,
+      body,
+      status,
+    });
+    if (error) throw error;
+  } catch (err) {
+    console.error("logNotification failed:", err.message);
+  }
 }
 
 module.exports = { sendPushNotification, logNotification };

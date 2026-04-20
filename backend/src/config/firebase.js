@@ -1,11 +1,34 @@
+const fs = require("fs");
+const path = require("path");
 const admin = require("firebase-admin");
 
-// Initialize Firebase Admin SDK
-// Place your firebase-service-account.json in the backend root
-const serviceAccount = require("../../firebase-service-account.json");
+const serviceAccountPath = path.join(
+  __dirname,
+  "..",
+  "..",
+  "firebase-service-account.json"
+);
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+let initialized = false;
+
+if (fs.existsSync(serviceAccountPath)) {
+  try {
+    const serviceAccount = require(serviceAccountPath);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    initialized = true;
+  } catch (error) {
+    console.warn(
+      "Firebase Admin init failed — push notifications disabled:",
+      error.message
+    );
+  }
+} else {
+  console.warn(
+    "firebase-service-account.json not found — push notifications disabled."
+  );
+}
 
 module.exports = admin;
+module.exports.isInitialized = () => initialized;
