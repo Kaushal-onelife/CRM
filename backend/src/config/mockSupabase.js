@@ -269,18 +269,23 @@ class MockQueryBuilder {
   }
 
   _execUpdate() {
-    let data = this._applyFilters(tables[this._table] || []);
-
-    // Apply updates in-place
-    data.forEach((row) => {
-      Object.assign(row, this._updateData);
-    });
-
-    // If select() was chained
-    if (this._singleMode) {
-      return { data: data.length > 0 ? clone(data[0]) : null, error: data.length === 0 ? { message: "No rows found" } : null };
+    const sourceRows = tables[this._table] || [];
+    const matched = [];
+    for (const row of sourceRows) {
+      if (this._filters.every((f) => f(row))) {
+        Object.assign(row, this._updateData);
+        matched.push(row);
+      }
     }
-    return { data: clone(data), error: null };
+
+    if (this._singleMode) {
+      return {
+        data: matched.length > 0 ? clone(matched[0]) : null,
+        error:
+          matched.length === 0 ? { message: "No rows found" } : null,
+      };
+    }
+    return { data: clone(matched), error: null };
   }
 
   _execDelete() {
