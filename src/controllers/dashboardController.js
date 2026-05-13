@@ -112,6 +112,7 @@ async function getDashboard(req, res) {
       today_services: todayServices.data || [],
       upcoming_services: upcomingServices.data || [],
       overdue_services: overdueServices.data || [],
+      due_services: overdueServices.data || [],
     });
   } catch (error) {
     res.status(500).json({ error: error.message });

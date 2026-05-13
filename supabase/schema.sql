@@ -105,14 +105,59 @@ CREATE TABLE notifications (
   status TEXT DEFAULT 'sent'
 );
 
+-- 8. AMC CONTRACTS (Annual Maintenance Contracts)
+-- Status: 'active' (default), 'expired', 'cancelled'
+-- payment_status: 'unpaid' (default), 'paid', 'partial'
+CREATE TABLE amc_contracts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id),
+  customer_id UUID NOT NULL REFERENCES customers(id),
+  plan_name TEXT NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  total_services INT NOT NULL DEFAULT 4,
+  services_used INT NOT NULL DEFAULT 0,
+  amount NUMERIC(10,2) DEFAULT 0,
+  payment_status TEXT DEFAULT 'unpaid',
+  status TEXT DEFAULT 'active',
+  auto_schedule BOOLEAN DEFAULT TRUE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Link services to AMC contracts (nullable: services may exist outside any AMC)
+ALTER TABLE services ADD COLUMN IF NOT EXISTS amc_id UUID REFERENCES amc_contracts(id) ON DELETE SET NULL;
+
+-- 9. INVENTORY PARTS (water purifier spare parts in stock)
+CREATE TABLE inventory_parts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id),
+  name TEXT NOT NULL,
+  sku TEXT,
+  quantity INT NOT NULL DEFAULT 0,
+  min_stock INT NOT NULL DEFAULT 5,
+  unit_price NUMERIC(10,2) DEFAULT 0,
+  cost_price NUMERIC(10,2) DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE (tenant_id, sku)
+);
+
 -- ============================================
 -- INDEXES
 -- ============================================
 CREATE INDEX idx_services_tenant_status ON services(tenant_id, status);
 CREATE INDEX idx_services_tenant_scheduled ON services(tenant_id, scheduled_date);
 CREATE INDEX idx_services_tenant_next_due ON services(tenant_id, next_due_date);
+CREATE INDEX idx_services_amc ON services(amc_id);
 CREATE INDEX idx_customers_tenant ON customers(tenant_id);
 CREATE INDEX idx_bills_tenant_payment ON bills(tenant_id, payment_status);
+CREATE INDEX idx_amc_tenant_status ON amc_contracts(tenant_id, status);
+CREATE INDEX idx_amc_tenant_end ON amc_contracts(tenant_id, end_date);
+CREATE INDEX idx_inventory_tenant ON inventory_parts(tenant_id);
+
+-- Per-tenant unique bill numbers (prevents duplicates from concurrent inserts)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bills_tenant_billnumber
+  ON bills(tenant_id, bill_number);
 
 -- ============================================
 -- ROW LEVEL SECURITY
@@ -124,6 +169,8 @@ ALTER TABLE bill_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE amc_contracts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_parts ENABLE ROW LEVEL SECURITY;
 
 -- Tenant isolation policies
 CREATE POLICY tenant_isolation ON customers
@@ -150,3 +197,9 @@ CREATE POLICY user_can_update_own_profile ON users
 
 CREATE POLICY user_can_read_own_tenant ON tenants
   FOR SELECT USING (id = (SELECT tenant_id FROM users WHERE id = auth.uid()));
+
+CREATE POLICY tenant_isolation ON amc_contracts
+  FOR ALL USING (tenant_id = (SELECT tenant_id FROM users WHERE id = auth.uid()));
+
+CREATE POLICY tenant_isolation ON inventory_parts
+  FOR ALL USING (tenant_id = (SELECT tenant_id FROM users WHERE id = auth.uid()));

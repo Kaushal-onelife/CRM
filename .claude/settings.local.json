@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e 'require\\('\\\\''@babel/parser'\\\\''\\).parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''__TRACKED_VAR__'\\\\'','\\\\''utf8'\\\\''\\),{sourceType:'\\\\''module'\\\\'',plugins:['\\\\''jsx'\\\\'']}\\);console.log\\('\\\\''ok'\\\\''\\)')"
+    ]
+  }
+}

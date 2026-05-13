@@ -3,7 +3,8 @@ const { supabaseAdmin } = require("../config/supabase");
 const { sendPushNotification, logNotification } = require("../utils/notification");
 
 function startDueDateCron() {
-  // Runs every day at 9 AM
+  const timezone = process.env.CRON_TIMEZONE || "Asia/Kolkata";
+  // Runs every day at 9 AM in the configured timezone (defaults to IST)
   cron.schedule("0 9 * * *", async () => {
     console.log("Running due date reminder cron...");
 
@@ -48,9 +49,9 @@ function startDueDateCron() {
     } catch (error) {
       console.error("Cron error:", error.message);
     }
-  });
+  }, { timezone });
 
-  console.log("Due date reminder cron scheduled (daily at 9 AM).");
+  console.log(`Due date reminder cron scheduled (daily at 9 AM ${timezone}).`);
 }
 
 module.exports = { startDueDateCron };

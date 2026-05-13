@@ -1,8 +1,42 @@
 const { supabaseAdmin } = require("../config/supabase");
 
+const MAX_LIMIT = 100;
+
+// Insert a bill, retrying on unique-violation against (tenant_id, bill_number).
+// Postgres unique-violation surfaces as Supabase error code 23505.
+async function insertBillWithUniqueNumber(tenant_id, baseInsert) {
+  const datePrefix = new Date().toISOString().split("T")[0].replace(/-/g, "");
+  const { count } = await supabaseAdmin
+    .from("bills")
+    .select("*", { count: "exact", head: true })
+    .eq("tenant_id", tenant_id);
+
+  let seq = (count || 0) + 1;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const billNumber = `BILL-${datePrefix}-${String(seq).padStart(4, "0")}`;
+    const { data, error } = await supabaseAdmin
+      .from("bills")
+      .insert({ ...baseInsert, tenant_id, bill_number: billNumber })
+      .select()
+      .single();
+
+    if (!error) return { data, error: null };
+    if (error.code === "23505") {
+      seq += 1;
+      continue;
+    }
+    return { data: null, error };
+  }
+  return {
+    data: null,
+    error: { message: "Could not generate a unique bill number, please retry." },
+  };
+}
+
 async function getAll(req, res) {
   const { tenant_id } = req.user;
-  const { payment_status, customer_id, page = 1, limit = 20 } = req.query;
+  const { payment_status, customer_id, page = 1 } = req.query;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, MAX_LIMIT);
   const offset = (page - 1) * limit;
 
   let query = supabaseAdmin
@@ -19,7 +53,7 @@ async function getAll(req, res) {
 
   if (error) return res.status(400).json({ error: error.message });
 
-  res.json({ bills: data, total: count, page: +page, limit: +limit });
+  res.json({ bills: data, total: count, page: +page, limit });
 }
 
 async function getById(req, res) {
@@ -41,36 +75,23 @@ async function create(req, res) {
   const { tenant_id } = req.user;
   const { items, ...billData } = req.body;
 
-  // Generate bill number: BILL-YYYYMMDD-XXXX
-  const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
-  const { count } = await supabaseAdmin
-    .from("bills")
-    .select("*", { count: "exact", head: true })
-    .eq("tenant_id", tenant_id);
-
-  const billNumber = `BILL-${date}-${String((count || 0) + 1).padStart(4, "0")}`;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: "Bill must include at least one item" });
+  }
 
   // Calculate totals
   const amount = items.reduce(
-    (sum, item) => sum + item.unit_price * item.quantity,
+    (sum, item) =>
+      sum + (parseFloat(item.unit_price) || 0) * (parseInt(item.quantity, 10) || 0),
     0
   );
-  const tax = billData.tax || 0;
+  const tax = parseFloat(billData.tax) || 0;
   const total = amount + tax;
 
-  // Insert bill
-  const { data: bill, error: billError } = await supabaseAdmin
-    .from("bills")
-    .insert({
-      ...billData,
-      tenant_id,
-      bill_number: billNumber,
-      amount,
-      tax,
-      total,
-    })
-    .select()
-    .single();
+  const { data: bill, error: billError } = await insertBillWithUniqueNumber(
+    tenant_id,
+    { ...billData, amount, tax, total }
+  );
 
   if (billError) return res.status(400).json({ error: billError.message });
 

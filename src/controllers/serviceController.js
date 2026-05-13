@@ -1,8 +1,11 @@
 const { supabaseAdmin } = require("../config/supabase");
 
+const MAX_LIMIT = 100;
+
 async function getAll(req, res) {
   const { tenant_id } = req.user;
-  const { status, customer_id, from, to, page = 1, limit = 20 } = req.query;
+  const { status, customer_id, from, to, page = 1 } = req.query;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, MAX_LIMIT);
   const offset = (page - 1) * limit;
   const today = new Date().toISOString().split("T")[0];
 
@@ -30,7 +33,7 @@ async function getAll(req, res) {
 
   if (error) return res.status(400).json({ error: error.message });
 
-  res.json({ services: data, total: count, page: +page, limit: +limit });
+  res.json({ services: data, total: count, page: +page, limit });
 }
 
 async function getById(req, res) {
@@ -109,12 +112,7 @@ async function markCompleted(req, res) {
       payment_method,
     } = req.body;
 
-    console.log("complete payload:", req.body);
-    console.log("complete service id:", req.params.id);
-    console.log("complete user:", req.user);
-
     const normalizedParts = Array.isArray(parts_replaced) ? parts_replaced : [];
-    console.log("normalized parts:", normalizedParts);
 
     // Calculate total amount from service charge + parts
     const partsTotal = normalizedParts.reduce(
@@ -141,8 +139,6 @@ async function markCompleted(req, res) {
       .select("*, customers(name, phone, address)")
       .single();
 
-    console.log("service update result:", { data, error });
-
     if (error) {
       return res.status(400).json({ error: error.message });
     }
@@ -158,8 +154,6 @@ async function markCompleted(req, res) {
           status: "scheduled",
           scheduled_date: next_due_date,
         });
-
-      console.log("next service insert result:", { error: nextServiceError });
 
       if (nextServiceError) {
         return res.status(400).json({ error: nextServiceError.message });
@@ -198,15 +192,6 @@ async function generateBill(req, res) {
     return res.status(400).json({ error: "Service must be completed first" });
   }
 
-  // Generate bill number
-  const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
-  const { count } = await supabaseAdmin
-    .from("bills")
-    .select("*", { count: "exact", head: true })
-    .eq("tenant_id", tenant_id);
-
-  const billNumber = `BILL-${date}-${String((count || 0) + 1).padStart(4, "0")}`;
-
   // Build bill items from parts + service charge
   const items = [];
   if (service.service_charge > 0) {
@@ -233,26 +218,53 @@ async function generateBill(req, res) {
   const amount = items.reduce((sum, item) => sum + item.total, 0);
   const total = amount; // no tax for now
 
-  // Create the bill
+  // Create the bill (race-safe unique bill_number)
   const isPaid = payment_status === "paid";
-  const { data: bill, error: billError } = await supabaseAdmin
+  const datePrefix = new Date().toISOString().split("T")[0].replace(/-/g, "");
+  const { count: existingCount } = await supabaseAdmin
     .from("bills")
-    .insert({
-      tenant_id,
-      customer_id: service.customer_id,
-      service_id: service.id,
-      bill_number: billNumber,
-      amount,
-      tax: 0,
-      total,
-      payment_status: payment_status || "unpaid",
-      payment_method: isPaid ? payment_method : null,
-      paid_date: isPaid ? new Date().toISOString().split("T")[0] : null,
-    })
-    .select()
-    .single();
+    .select("*", { count: "exact", head: true })
+    .eq("tenant_id", tenant_id);
 
-  if (billError) return res.status(400).json({ error: billError.message });
+  let bill = null;
+  let billError = null;
+  let seq = (existingCount || 0) + 1;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const billNumber = `BILL-${datePrefix}-${String(seq).padStart(4, "0")}`;
+    const insertResult = await supabaseAdmin
+      .from("bills")
+      .insert({
+        tenant_id,
+        customer_id: service.customer_id,
+        service_id: service.id,
+        bill_number: billNumber,
+        amount,
+        tax: 0,
+        total,
+        payment_status: payment_status || "unpaid",
+        payment_method: isPaid ? payment_method : null,
+        paid_date: isPaid ? new Date().toISOString().split("T")[0] : null,
+      })
+      .select()
+      .single();
+
+    if (!insertResult.error) {
+      bill = insertResult.data;
+      break;
+    }
+    if (insertResult.error.code === "23505") {
+      seq += 1;
+      continue;
+    }
+    billError = insertResult.error;
+    break;
+  }
+
+  if (!bill) {
+    return res
+      .status(400)
+      .json({ error: billError ? billError.message : "Could not generate bill number" });
+  }
 
   // Insert bill items
   if (items.length > 0) {
