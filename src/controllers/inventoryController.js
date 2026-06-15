@@ -58,6 +58,17 @@ function sanitize(body) {
   };
 }
 
+// A duplicate SKU hits the UNIQUE (tenant_id, sku) constraint (Postgres 23505).
+// Surface a clear message instead of the raw constraint error.
+function skuConflict(error, res) {
+  if (error.code === "23505") {
+    return res
+      .status(409)
+      .json({ error: "A part with this SKU already exists. Use a different SKU." });
+  }
+  return res.status(400).json({ error: error.message });
+}
+
 async function create(req, res) {
   const { tenant_id } = req.user;
   if (!req.body.name) {
@@ -70,7 +81,7 @@ async function create(req, res) {
     .select()
     .single();
 
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return skuConflict(error, res);
   res.status(201).json(data);
 }
 
@@ -85,7 +96,7 @@ async function update(req, res) {
     .select()
     .single();
 
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return skuConflict(error, res);
   res.json(data);
 }
 

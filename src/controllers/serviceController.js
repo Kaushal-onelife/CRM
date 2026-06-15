@@ -2,6 +2,31 @@ const { supabaseAdmin } = require("../config/supabase");
 
 const MAX_LIMIT = 100;
 
+// Only these columns may be written from the client. Anything else (stray
+// frontend-only fields, joined `customers`, `id`) is dropped so PostgREST never
+// rejects the whole request with "column ... does not exist".
+const SERVICE_WRITE_FIELDS = [
+  "customer_id",
+  "service_type",
+  "status",
+  "scheduled_date",
+  "completed_date",
+  "next_due_date",
+  "next_contact_date",
+  "assigned_to",
+  "amount",
+  "service_charge",
+  "parts_replaced",
+  "notes",
+  "amc_id",
+];
+
+function pick(body, fields) {
+  const out = {};
+  for (const k of fields) if (body[k] !== undefined) out[k] = body[k];
+  return out;
+}
+
 async function getAll(req, res) {
   const { tenant_id } = req.user;
   const { status, customer_id, from, to, page = 1 } = req.query;
@@ -73,9 +98,13 @@ async function getCustomerHistory(req, res) {
 async function create(req, res) {
   const { tenant_id } = req.user;
 
+  if (!req.body.scheduled_date) {
+    return res.status(400).json({ error: "scheduled_date is required" });
+  }
+
   const { data, error } = await supabaseAdmin
     .from("services")
-    .insert({ ...req.body, tenant_id, status: "scheduled" })
+    .insert({ ...pick(req.body, SERVICE_WRITE_FIELDS), tenant_id, status: "scheduled" })
     .select()
     .single();
 
@@ -89,7 +118,7 @@ async function update(req, res) {
 
   const { data, error } = await supabaseAdmin
     .from("services")
-    .update(req.body)
+    .update(pick(req.body, SERVICE_WRITE_FIELDS))
     .eq("id", req.params.id)
     .eq("tenant_id", tenant_id)
     .select()

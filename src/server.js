@@ -35,7 +35,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: "1mb" }));
+// 5mb accommodates bulk customer CSV imports (~30k rows) sent in the JSON body.
+app.use(express.json({ limit: "5mb" }));
 
 // Routes
 app.use("/api/auth", require("./routes/authRoutes"));

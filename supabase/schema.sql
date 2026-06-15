@@ -224,3 +224,24 @@ CREATE POLICY tenant_isolation ON amc_contracts
 DROP POLICY IF EXISTS tenant_isolation ON inventory_parts;
 CREATE POLICY tenant_isolation ON inventory_parts
   FOR ALL USING (tenant_id = (SELECT tenant_id FROM users WHERE id = auth.uid()));
+
+-- ============================================
+-- CUSTOMER PHONE UNIQUENESS  (must be LAST — see note)
+-- ============================================
+-- The identity key for CSV import dedup: a phone is unique within a business
+-- (same phone may exist under different tenants). This is the DB-level guarantee
+-- behind the "no duplicate customer" rule.
+--
+-- This block is intentionally the LAST thing in the file: creating a unique index
+-- fails if duplicate (tenant_id, phone) rows already exist, so we (1) auto-remove
+-- older duplicates first, keeping the newest row per phone, then (2) create the
+-- index. Placing it last means that even if anything here errored, all the tables,
+-- columns, and RLS policies above are already applied.
+DELETE FROM customers c
+USING customers d
+WHERE c.tenant_id = d.tenant_id
+  AND c.phone = d.phone
+  AND c.created_at < d.created_at;   -- keep the newest, delete older duplicate(s)
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_tenant_phone
+  ON customers(tenant_id, phone);
