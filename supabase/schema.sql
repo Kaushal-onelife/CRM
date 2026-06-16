@@ -233,15 +233,82 @@ CREATE POLICY tenant_isolation ON inventory_parts
 -- behind the "no duplicate customer" rule.
 --
 -- This block is intentionally the LAST thing in the file: creating a unique index
--- fails if duplicate (tenant_id, phone) rows already exist, so we (1) auto-remove
--- older duplicates first, keeping the newest row per phone, then (2) create the
--- index. Placing it last means that even if anything here errored, all the tables,
--- columns, and RLS policies above are already applied.
-DELETE FROM customers c
-USING customers d
-WHERE c.tenant_id = d.tenant_id
-  AND c.phone = d.phone
-  AND c.created_at < d.created_at;   -- keep the newest, delete older duplicate(s)
+-- fails if duplicate (tenant_id, phone) rows already exist, so we de-duplicate
+-- first (keeping the NEWEST row per phone), then create the index. Placing it
+-- last means that even if anything here errored, all the tables, columns, and
+-- RLS policies above are already applied.
+--
+-- IMPORTANT: a duplicate customer may have services/bills/AMCs/notifications
+-- attached. We must MOVE those child rows to the surviving (newest) customer
+-- BEFORE deleting the duplicate — otherwise the delete violates the FK
+-- (services_customer_id_fkey) and no history is lost.
+DO $$
+DECLARE
+  dup RECORD;
+  keeper UUID;
+BEGIN
+  -- For every (tenant_id, phone) group that has more than one customer:
+  FOR dup IN
+    SELECT tenant_id, phone
+    FROM customers
+    GROUP BY tenant_id, phone
+    HAVING COUNT(*) > 1
+  LOOP
+    -- The keeper = newest customer in this group.
+    SELECT id INTO keeper
+    FROM customers
+    WHERE tenant_id = dup.tenant_id AND phone = dup.phone
+    ORDER BY created_at DESC
+    LIMIT 1;
+
+    -- Re-point all child records from the older duplicates to the keeper.
+    UPDATE services      SET customer_id = keeper
+      WHERE tenant_id = dup.tenant_id AND customer_id IN (
+        SELECT id FROM customers WHERE tenant_id = dup.tenant_id AND phone = dup.phone AND id <> keeper);
+    UPDATE bills         SET customer_id = keeper
+      WHERE tenant_id = dup.tenant_id AND customer_id IN (
+        SELECT id FROM customers WHERE tenant_id = dup.tenant_id AND phone = dup.phone AND id <> keeper);
+    UPDATE amc_contracts SET customer_id = keeper
+      WHERE tenant_id = dup.tenant_id AND customer_id IN (
+        SELECT id FROM customers WHERE tenant_id = dup.tenant_id AND phone = dup.phone AND id <> keeper);
+    UPDATE notifications SET customer_id = keeper
+      WHERE tenant_id = dup.tenant_id AND customer_id IN (
+        SELECT id FROM customers WHERE tenant_id = dup.tenant_id AND phone = dup.phone AND id <> keeper);
+
+    -- Now the older duplicates have no children — safe to delete.
+    DELETE FROM customers
+    WHERE tenant_id = dup.tenant_id AND phone = dup.phone AND id <> keeper;
+  END LOOP;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_tenant_phone
   ON customers(tenant_id, phone);
+
+-- ============================================
+-- VERIFICATION (read-only — run manually to confirm the DB matches this schema)
+-- ============================================
+-- Uncomment and run any of these in the SQL Editor after applying.
+--
+-- 1) Confirm the previously-missing pieces exist:
+-- SELECT
+--   to_regclass('public.amc_contracts')   AS amc_table,
+--   to_regclass('public.inventory_parts') AS inventory_table;
+--   -- both should be non-NULL.
+--
+-- 2) Confirm amc_contracts has auto_schedule (and list all its columns):
+-- SELECT column_name, data_type
+-- FROM information_schema.columns
+-- WHERE table_schema = 'public' AND table_name = 'amc_contracts'
+-- ORDER BY ordinal_position;
+--   -- 'auto_schedule' must appear in the list.
+--
+-- 3) Confirm services has amc_id:
+-- SELECT column_name FROM information_schema.columns
+-- WHERE table_schema='public' AND table_name='services' AND column_name='amc_id';
+--   -- should return one row.
+--
+-- 4) See every table + column at once (compare against this file):
+-- SELECT table_name, column_name
+-- FROM information_schema.columns
+-- WHERE table_schema = 'public'
+-- ORDER BY table_name, ordinal_position;
