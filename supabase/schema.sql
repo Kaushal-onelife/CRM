@@ -26,8 +26,11 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   phone TEXT NOT NULL,
   role TEXT DEFAULT 'owner',
+  avatar_url TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+-- avatar_url for existing databases (idempotent backfill)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
 -- 3. CUSTOMERS (end customers of the business)
 CREATE TABLE IF NOT EXISTS customers (
@@ -283,6 +286,40 @@ END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_tenant_phone
   ON customers(tenant_id, phone);
+
+-- ============================================
+-- STORAGE: avatars bucket (user profile pictures)
+-- ============================================
+-- Public bucket so avatar URLs are directly viewable/cacheable. Files are stored
+-- as "<userId>/avatar.<ext>" so a new upload OVERWRITES the old one (no buildup).
+-- Idempotent: safe to re-run.
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+-- Anyone can READ avatars (public bucket).
+DROP POLICY IF EXISTS "avatars_public_read" ON storage.objects;
+CREATE POLICY "avatars_public_read" ON storage.objects
+  FOR SELECT USING (bucket_id = 'avatars');
+
+-- A user can write/update/delete ONLY their own folder ("<their uid>/...").
+DROP POLICY IF EXISTS "avatars_user_write" ON storage.objects;
+CREATE POLICY "avatars_user_write" ON storage.objects
+  FOR INSERT WITH CHECK (
+    bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+DROP POLICY IF EXISTS "avatars_user_update" ON storage.objects;
+CREATE POLICY "avatars_user_update" ON storage.objects
+  FOR UPDATE USING (
+    bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+DROP POLICY IF EXISTS "avatars_user_delete" ON storage.objects;
+CREATE POLICY "avatars_user_delete" ON storage.objects
+  FOR DELETE USING (
+    bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text
+  );
 
 -- ============================================
 -- VERIFICATION (read-only — run manually to confirm the DB matches this schema)
