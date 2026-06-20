@@ -73,7 +73,7 @@ async function getById(req, res) {
 
 async function create(req, res) {
   const { tenant_id } = req.user;
-  const { items, ...billData } = req.body;
+  const { items, customer_id, service_id, tax: taxIn, payment_status, payment_method } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: "Bill must include at least one item" });
@@ -85,12 +85,26 @@ async function create(req, res) {
       sum + (parseFloat(item.unit_price) || 0) * (parseInt(item.quantity, 10) || 0),
     0
   );
-  const tax = parseFloat(billData.tax) || 0;
+  const tax = parseFloat(taxIn) || 0;
   const total = amount + tax;
+
+  // Allow creating a bill as already paid (e.g. paid on the spot). Stamp the
+  // paid_date + method only when marked paid; otherwise default to unpaid.
+  const isPaid = payment_status === "paid";
+  const today = new Date().toISOString().split("T")[0];
 
   const { data: bill, error: billError } = await insertBillWithUniqueNumber(
     tenant_id,
-    { ...billData, amount, tax, total }
+    {
+      customer_id,
+      service_id: service_id || null,
+      amount,
+      tax,
+      total,
+      payment_status: isPaid ? "paid" : "unpaid",
+      payment_method: isPaid ? payment_method || null : null,
+      paid_date: isPaid ? today : null,
+    }
   );
 
   if (billError) return res.status(400).json({ error: billError.message });

@@ -57,9 +57,6 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-const { startDueDateCron } = require("./cron/dueDateReminder");
-startDueDateCron();
-
 // 404 for unmatched API routes
 app.use("/api", (req, res) => {
   res.status(404).json({ error: "Endpoint not found" });

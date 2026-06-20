@@ -1,30 +1,7 @@
-const { getFirebaseAdmin } = require("../config/firebase");
 const { supabaseAdmin } = require("../config/supabase");
 
-async function sendPushNotification(fcmToken, title, body) {
-  if (!fcmToken) return null;
-
-  try {
-    const firebaseAdmin = getFirebaseAdmin();
-
-    if (!firebaseAdmin) {
-      console.warn(
-        "Skipping push notification because Firebase Admin credentials are not configured."
-      );
-      return null;
-    }
-
-    const result = await firebaseAdmin.messaging().send({
-      token: fcmToken,
-      notification: { title, body },
-    });
-    return result;
-  } catch (error) {
-    console.error("FCM send error:", error.message);
-    return null;
-  }
-}
-
+// Records an outreach/notification event in the `notifications` table.
+// Used by the Reminder Center to log when the owner contacts a customer.
 async function logNotification({
   tenant_id,
   customer_id,
@@ -45,4 +22,4 @@ async function logNotification({
   });
 }
 
-module.exports = { sendPushNotification, logNotification };
+module.exports = { logNotification };
