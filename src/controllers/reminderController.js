@@ -76,15 +76,40 @@ async function getReminderData(tenant_id, { dueDays = DEFAULT_DUE_DAYS, amcDays 
     .eq("id", tenant_id)
     .single();
 
-  const due_soon = (svcDue.data || []).map((r) =>
-    shape(r, { type: "service_due", dateField: "scheduled_date", today })
-  );
-  const overdue = (svcOver.data || []).map((r) =>
-    shape(r, { type: "service_overdue", dateField: "scheduled_date", today })
-  );
-  const amc_expiring = (amc.data || []).map((r) =>
-    shape(r, { type: "amc_expiring", dateField: "end_date", today })
-  );
+  // Reminder logs from TODAY — used to mark which customers were already
+  // contacted today (the mark auto-resets each day since we filter by date).
+  const { data: todaysLogs } = await supabaseAdmin
+    .from("notifications")
+    .select("customer_id, service_id")
+    .eq("tenant_id", tenant_id)
+    .in("type", ["reminder_whatsapp", "reminder_manual"])
+    .gte("sent_at", `${today}T00:00:00`);
+
+  // Build lookup sets: service reminders keyed by service_id, AMC/customer
+  // reminders keyed by customer_id.
+  const remindedServiceIds = new Set();
+  const remindedCustomerIds = new Set();
+  for (const log of todaysLogs || []) {
+    if (log.service_id) remindedServiceIds.add(log.service_id);
+    if (log.customer_id) remindedCustomerIds.add(log.customer_id);
+  }
+
+  const withReminded = (item) => ({
+    ...item,
+    reminded_today: item.service_id
+      ? remindedServiceIds.has(item.service_id)
+      : remindedCustomerIds.has(item.customer_id),
+  });
+
+  const due_soon = (svcDue.data || [])
+    .map((r) => shape(r, { type: "service_due", dateField: "scheduled_date", today }))
+    .map(withReminded);
+  const overdue = (svcOver.data || [])
+    .map((r) => shape(r, { type: "service_overdue", dateField: "scheduled_date", today }))
+    .map(withReminded);
+  const amc_expiring = (amc.data || [])
+    .map((r) => shape(r, { type: "amc_expiring", dateField: "end_date", today }))
+    .map(withReminded);
 
   return {
     business_name: tenant?.business_name || "",
