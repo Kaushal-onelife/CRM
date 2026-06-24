@@ -117,11 +117,44 @@ async function update(req, res) {
 
 async function remove(req, res) {
   const { tenant_id } = req.user;
+  const customerId = req.params.id;
+
+  // C3: customers are referenced by services/bills/amc_contracts (no cascade),
+  // so a raw delete would FK-error with an opaque message. Check first and
+  // return a clear, actionable message instead.
+  const [services, bills, amc] = await Promise.all([
+    supabaseAdmin
+      .from("services")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenant_id)
+      .eq("customer_id", customerId),
+    supabaseAdmin
+      .from("bills")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenant_id)
+      .eq("customer_id", customerId),
+    supabaseAdmin
+      .from("amc_contracts")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenant_id)
+      .eq("customer_id", customerId),
+  ]);
+
+  const parts = [];
+  if (services.count) parts.push(`${services.count} service${services.count > 1 ? "s" : ""}`);
+  if (bills.count) parts.push(`${bills.count} bill${bills.count > 1 ? "s" : ""}`);
+  if (amc.count) parts.push(`${amc.count} AMC contract${amc.count > 1 ? "s" : ""}`);
+
+  if (parts.length > 0) {
+    return res.status(409).json({
+      error: `Can't delete this customer — they have ${parts.join(", ")}. Remove those first.`,
+    });
+  }
 
   const { error } = await supabaseAdmin
     .from("customers")
     .delete()
-    .eq("id", req.params.id)
+    .eq("id", customerId)
     .eq("tenant_id", tenant_id);
 
   if (error) return res.status(400).json({ error: error.message });

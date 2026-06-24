@@ -152,6 +152,10 @@ async function markCompleted(req, res) {
     );
     const totalAmount = (parseFloat(service_charge) || 0) + partsTotal;
 
+    // C1: only complete a service that ISN'T already completed. `.neq` makes the
+    // update a no-op (0 rows) if it was already completed — preventing duplicate
+    // follow-ups / double counting from a re-submit. We use maybeSingle() so
+    // "0 rows" isn't an error; we detect it and return 409.
     const { data, error } = await supabaseAdmin
       .from("services")
       .update({
@@ -165,14 +169,20 @@ async function markCompleted(req, res) {
       })
       .eq("id", req.params.id)
       .eq("tenant_id", tenant_id)
+      .neq("status", "completed")
       .select("*, customers(name, phone, address)")
-      .single();
+      .maybeSingle();
 
     if (error) {
       return res.status(400).json({ error: error.message });
     }
+    if (!data) {
+      // No row updated => it was already completed (or doesn't exist).
+      return res.status(409).json({ error: "This service is already completed." });
+    }
 
-    // If next_due_date provided, create the next service automatically
+    // If next_due_date provided, create the next service automatically.
+    // W2: carry amc_id + assigned_to so an AMC's recurring visit stays linked.
     if (next_due_date) {
       const { error: nextServiceError } = await supabaseAdmin
         .from("services")
@@ -182,10 +192,29 @@ async function markCompleted(req, res) {
           service_type: data.service_type,
           status: "scheduled",
           scheduled_date: next_due_date,
+          amc_id: data.amc_id || null,
+          assigned_to: data.assigned_to || null,
         });
 
       if (nextServiceError) {
         return res.status(400).json({ error: nextServiceError.message });
+      }
+    }
+
+    // C2: if this was an AMC service, increment the contract's services_used.
+    if (data.amc_id) {
+      const { data: amc } = await supabaseAdmin
+        .from("amc_contracts")
+        .select("services_used")
+        .eq("id", data.amc_id)
+        .eq("tenant_id", tenant_id)
+        .maybeSingle();
+      if (amc) {
+        await supabaseAdmin
+          .from("amc_contracts")
+          .update({ services_used: (amc.services_used || 0) + 1 })
+          .eq("id", data.amc_id)
+          .eq("tenant_id", tenant_id);
       }
     }
 
