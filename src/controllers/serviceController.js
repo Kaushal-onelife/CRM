@@ -29,7 +29,7 @@ function pick(body, fields) {
 
 async function getAll(req, res) {
   const { tenant_id } = req.user;
-  const { status, customer_id, from, to, page = 1 } = req.query;
+  const { status, customer_id, from, to, search, page = 1 } = req.query;
   const limit = Math.min(parseInt(req.query.limit, 10) || 20, MAX_LIMIT);
   const offset = (page - 1) * limit;
   const today = new Date().toISOString().split("T")[0];
@@ -48,6 +48,16 @@ async function getAll(req, res) {
     query = query.eq("status", "scheduled").lt("scheduled_date", today);
   } else if (status && status !== "all") {
     query = query.eq("status", status);
+  }
+
+  // Search by service type OR customer name/phone in a single OR. Using the
+  // embedded `customers.<col>` form keeps the customers join a LEFT join so a
+  // service-type-only match isn't dropped when the customer doesn't match.
+  if (search) {
+    const s = search.replace(/[%,()]/g, ""); // strip PostgREST filter metachars
+    query = query.or(
+      `service_type.ilike.%${s}%,customers.name.ilike.%${s}%,customers.phone.ilike.%${s}%`
+    );
   }
 
   if (customer_id) query = query.eq("customer_id", customer_id);
@@ -134,6 +144,7 @@ async function markCompleted(req, res) {
     const { tenant_id } = req.user;
     const {
       next_due_date,
+      next_service_type,
       service_charge,
       parts_replaced,
       notes,
@@ -182,14 +193,20 @@ async function markCompleted(req, res) {
     }
 
     // If next_due_date provided, create the next service automatically.
-    // W2: carry amc_id + assigned_to so an AMC's recurring visit stays linked.
+    // The next visit is usually a DIFFERENT type than the one just completed
+    // (e.g. after a repair, the next visit is routine maintenance). Use the
+    // explicitly chosen next_service_type; otherwise default smartly: keep the
+    // same type for AMC visits (contract cycle), else fall back to filter_change.
     if (next_due_date) {
+      const nextType =
+        next_service_type ||
+        (data.amc_id ? data.service_type : "filter_change");
       const { error: nextServiceError } = await supabaseAdmin
         .from("services")
         .insert({
           tenant_id,
           customer_id: data.customer_id,
-          service_type: data.service_type,
+          service_type: nextType,
           status: "scheduled",
           scheduled_date: next_due_date,
           amc_id: data.amc_id || null,
