@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require("../config/supabase");
+const { sendDbError } = require("../utils/dbError");
 
 // Sign up a new tenant + owner user
 async function signup(req, res) {
@@ -45,7 +46,10 @@ async function signup(req, res) {
       tenant_id: tenant.id,
     });
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    // DB constraint errors (e.g. duplicate tenant phone) -> friendly message;
+    // Supabase auth errors already carry readable messages, so pass those through.
+    if (error?.code) return sendDbError(res, error);
+    res.status(400).json({ error: error.message || "Could not create account." });
   }
 }
 

@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require("../config/supabase");
+const { sendDbError } = require("../utils/dbError");
 
 const MAX_LIMIT = 100;
 
@@ -99,7 +100,7 @@ async function create(req, res) {
     .select()
     .single();
 
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return sendDbError(res, error, { fk: "The selected customer no longer exists." });
 
   if (auto_schedule && totalServicesInt > 0) {
     const dates = evenlyDistributedDates(start_date, end_date, totalServicesInt);
@@ -115,7 +116,7 @@ async function create(req, res) {
       const { error: svcError } = await supabaseAdmin.from("services").insert(rows);
       if (svcError) {
         await supabaseAdmin.from("amc_contracts").delete().eq("id", contract.id);
-        return res.status(400).json({ error: svcError.message });
+        return sendDbError(res, svcError, { fallback: "Couldn't schedule AMC services. Please try again." });
       }
     }
   }
@@ -149,7 +150,7 @@ async function update(req, res) {
     .select()
     .single();
 
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return sendDbError(res, error);
   res.json(data);
 }
 

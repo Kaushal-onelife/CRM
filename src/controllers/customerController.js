@@ -1,5 +1,6 @@
 const { supabaseAdmin } = require("../config/supabase");
 const { toCsv, parseCsv } = require("../utils/csv");
+const { sendDbError } = require("../utils/dbError");
 
 const MAX_LIMIT = 100;
 
@@ -94,7 +95,7 @@ async function create(req, res) {
     .select()
     .single();
 
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return sendDbError(res, error);
 
   res.status(201).json(data);
 }
@@ -110,7 +111,7 @@ async function update(req, res) {
     .select()
     .single();
 
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return sendDbError(res, error);
 
   res.json(data);
 }

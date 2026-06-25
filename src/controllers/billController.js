@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require("../config/supabase");
+const { sendDbError } = require("../utils/dbError");
 
 const MAX_LIMIT = 100;
 
@@ -107,7 +108,7 @@ async function create(req, res) {
     }
   );
 
-  if (billError) return res.status(400).json({ error: billError.message });
+  if (billError) return sendDbError(res, billError, { fk: "The selected customer no longer exists." });
 
   // Insert bill items
   const billItems = items.map((item) => ({
@@ -123,7 +124,7 @@ async function create(req, res) {
     .insert(billItems);
 
   if (itemsError)
-    return res.status(400).json({ error: itemsError.message });
+    return sendDbError(res, itemsError, { fallback: "Couldn't save bill items. Please try again." });
 
   res.status(201).json({ ...bill, items: billItems });
 }
@@ -144,7 +145,7 @@ async function markPaid(req, res) {
     .select()
     .single();
 
-  if (error) return res.status(400).json({ error: error.message });
+  if (error) return sendDbError(res, error);
 
   res.json(data);
 }
