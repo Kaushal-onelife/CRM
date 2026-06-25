@@ -126,8 +126,12 @@ CREATE TABLE IF NOT EXISTS amc_contracts (
   status TEXT DEFAULT 'active',
   auto_schedule BOOLEAN DEFAULT TRUE,
   notes TEXT,
+  -- Links a renewed contract to the one it replaced (contract history per customer).
+  renewed_from UUID REFERENCES amc_contracts(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+-- renewed_from for existing databases (idempotent backfill)
+ALTER TABLE amc_contracts ADD COLUMN IF NOT EXISTS renewed_from UUID REFERENCES amc_contracts(id) ON DELETE SET NULL;
 
 -- Link services to AMC contracts (nullable: services may exist outside any AMC)
 ALTER TABLE services ADD COLUMN IF NOT EXISTS amc_id UUID REFERENCES amc_contracts(id) ON DELETE SET NULL;
