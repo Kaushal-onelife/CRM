@@ -15,9 +15,16 @@ CREATE TABLE IF NOT EXISTS tenants (
   email TEXT,
   address TEXT,
   logo_url TEXT,
+  -- Optional terms printed at the bottom of bill PDFs. bill_terms = general
+  -- service/parts bills; amc_terms = AMC contract bills. Blank => no terms shown.
+  bill_terms TEXT,
+  amc_terms TEXT,
   subscription_status TEXT DEFAULT 'trial',
   created_at TIMESTAMPTZ DEFAULT now()
 );
+-- terms columns for existing databases (idempotent)
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS bill_terms TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS amc_terms TEXT;
 
 -- 2. USERS (app login - tied to tenant)
 CREATE TABLE IF NOT EXISTS users (

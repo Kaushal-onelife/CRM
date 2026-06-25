@@ -44,9 +44,9 @@ async function getAll(req, res) {
 
   // Date-based filtering for upcoming/due (auto-classification of 'scheduled' status)
   if (status === "upcoming") {
-    query = query.eq("status", "scheduled").gte("scheduled_date", today);
+    query = query.eq("status", "scheduled").gt("scheduled_date", today);
   } else if (status === "due") {
-    query = query.eq("status", "scheduled").lt("scheduled_date", today);
+    query = query.eq("status", "scheduled").lte("scheduled_date", today);
   } else if (status && status !== "all") {
     query = query.eq("status", status);
   }
@@ -127,6 +127,24 @@ async function create(req, res) {
 async function update(req, res) {
   const { tenant_id } = req.user;
 
+  // Guard against editing a COMPLETED service. A completed service is an audit/
+  // financial record — it may have a bill and may count toward an AMC contract,
+  // so its fields must stay immutable. (Status buttons for not-yet-completed
+  // services and markCompleted still work; this only locks completed ones.)
+  const { data: current, error: loadErr } = await supabaseAdmin
+    .from("services")
+    .select("status")
+    .eq("id", req.params.id)
+    .eq("tenant_id", tenant_id)
+    .maybeSingle();
+  if (loadErr || !current) return res.status(404).json({ error: "Service not found" });
+
+  if (current.status === "completed") {
+    return res.status(409).json({
+      error: "This service is completed and can't be edited. Completed services are kept as a record.",
+    });
+  }
+
   const { data, error } = await supabaseAdmin
     .from("services")
     .update(pick(req.body, SERVICE_WRITE_FIELDS))
@@ -138,6 +156,51 @@ async function update(req, res) {
   if (error) return sendDbError(res, error);
 
   res.json(data);
+}
+
+// DELETE /services/:id — remove a service. Blocked once completed (it may have a
+// bill / count toward an AMC / be part of the record). Allowed for scheduled,
+// pending, followup or rejected services. Nulls any notification pointers first
+// (notifications.service_id has no cascade) so we don't leave dangling refs.
+async function remove(req, res) {
+  const { tenant_id } = req.user;
+  const id = req.params.id;
+
+  const { data: svc, error: loadErr } = await supabaseAdmin
+    .from("services")
+    .select("status")
+    .eq("id", id)
+    .eq("tenant_id", tenant_id)
+    .maybeSingle();
+  if (loadErr || !svc) return res.status(404).json({ error: "Service not found" });
+
+  if (svc.status === "completed") {
+    return res.status(409).json({
+      error: "Can't delete a completed service — it's part of your records and may have a bill.",
+    });
+  }
+
+  // Detach any reminder/notification logs pointing at this service (no FK cascade).
+  await supabaseAdmin
+    .from("notifications")
+    .update({ service_id: null })
+    .eq("tenant_id", tenant_id)
+    .eq("service_id", id);
+
+  const { error: delErr } = await supabaseAdmin
+    .from("services")
+    .delete()
+    .eq("id", id)
+    .eq("tenant_id", tenant_id);
+
+  // A bill referencing this service would block the delete (FK restrict) — surface
+  // a clear message instead of the raw constraint error.
+  if (delErr) {
+    return sendDbError(res, delErr, {
+      fk: "Can't delete — a bill is linked to this service. Delete the bill first.",
+    });
+  }
+  res.json({ message: "Service deleted" });
 }
 
 async function markCompleted(req, res) {
@@ -198,43 +261,57 @@ async function markCompleted(req, res) {
     // (e.g. after a repair, the next visit is routine maintenance). Use the
     // explicitly chosen next_service_type; otherwise default smartly: keep the
     // same type for AMC visits (contract cycle), else fall back to filter_change.
+    //
+    // For AMC visits we must NOT create a follow-up beyond the contract's
+    // total_services — otherwise the contract ends up with more visits than it
+    // includes. If all visits are used, completing the last one is a renewal cue,
+    // not a reason to schedule another.
     if (next_due_date) {
-      const nextType =
-        next_service_type ||
-        (data.amc_id ? data.service_type : "filter_change");
-      const { error: nextServiceError } = await supabaseAdmin
-        .from("services")
-        .insert({
-          tenant_id,
-          customer_id: data.customer_id,
-          service_type: nextType,
-          status: "scheduled",
-          scheduled_date: next_due_date,
-          amc_id: data.amc_id || null,
-          assigned_to: data.assigned_to || null,
-        });
+      let allowFollowup = true;
+      if (data.amc_id) {
+        const [{ data: amc }, { count: completedCount }] = await Promise.all([
+          supabaseAdmin
+            .from("amc_contracts")
+            .select("total_services")
+            .eq("id", data.amc_id)
+            .eq("tenant_id", tenant_id)
+            .maybeSingle(),
+          supabaseAdmin
+            .from("services")
+            .select("id", { count: "exact", head: true })
+            .eq("amc_id", data.amc_id)
+            .eq("tenant_id", tenant_id)
+            .eq("status", "completed"),
+        ]);
+        // completedCount already includes the visit we just completed.
+        if (amc && (completedCount || 0) >= (amc.total_services || 0)) {
+          allowFollowup = false;
+        }
+      }
 
-      if (nextServiceError) {
-        return res.status(400).json({ error: nextServiceError.message });
+      if (allowFollowup) {
+        const nextType =
+          next_service_type ||
+          (data.amc_id ? data.service_type : "filter_change");
+        const { error: nextServiceError } = await supabaseAdmin
+          .from("services")
+          .insert({
+            tenant_id,
+            customer_id: data.customer_id,
+            service_type: nextType,
+            status: "scheduled",
+            scheduled_date: next_due_date,
+            amc_id: data.amc_id || null,
+            assigned_to: data.assigned_to || null,
+          });
+
+        if (nextServiceError) {
+          return res.status(400).json({ error: nextServiceError.message });
+        }
       }
     }
-
-    // C2: if this was an AMC service, increment the contract's services_used.
-    if (data.amc_id) {
-      const { data: amc } = await supabaseAdmin
-        .from("amc_contracts")
-        .select("services_used")
-        .eq("id", data.amc_id)
-        .eq("tenant_id", tenant_id)
-        .maybeSingle();
-      if (amc) {
-        await supabaseAdmin
-          .from("amc_contracts")
-          .update({ services_used: (amc.services_used || 0) + 1 })
-          .eq("id", data.amc_id)
-          .eq("tenant_id", tenant_id);
-      }
-    }
+    // Note: services_used is no longer incremented here — it's computed live from
+    // completed AMC-linked visits in amcController (self-healing, no drift).
 
     res.json({
       service: data,
@@ -351,4 +428,4 @@ async function generateBill(req, res) {
   res.status(201).json({ ...bill, items, customer: service.customers });
 }
 
-module.exports = { getAll, getById, getCustomerHistory, create, update, markCompleted, generateBill };
+module.exports = { getAll, getById, getCustomerHistory, create, update, remove, markCompleted, generateBill };

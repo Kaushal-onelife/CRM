@@ -37,13 +37,14 @@ async function getDashboard(req, res) {
         .eq("tenant_id", tenant_id)
         .eq("status", "followup"),
 
-      // Upcoming services (scheduled + future date, next 7 days)
+      // Upcoming services (scheduled + strictly future date, next 7 days).
+      // Today's services are "due", not upcoming, so they're excluded here.
       supabaseAdmin
         .from("services")
         .select("*, customers(name, phone)")
         .eq("tenant_id", tenant_id)
         .eq("status", "scheduled")
-        .gte("scheduled_date", today)
+        .gt("scheduled_date", today)
         .lte("scheduled_date", next7Days)
         .order("scheduled_date", { ascending: true })
         .limit(10),
@@ -56,13 +57,13 @@ async function getDashboard(req, res) {
         .eq("status", "completed")
         .gte("completed_date", `${today.substring(0, 7)}-01`),
 
-      // Due/Overdue services (scheduled + past date)
+      // Due/Overdue services (scheduled + today or past date)
       supabaseAdmin
         .from("services")
         .select("*, customers(name, phone)", { count: "exact" })
         .eq("tenant_id", tenant_id)
         .eq("status", "scheduled")
-        .lt("scheduled_date", today)
+        .lte("scheduled_date", today)
         .order("scheduled_date", { ascending: true })
         .limit(10),
 

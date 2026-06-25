@@ -47,6 +47,7 @@ app.use("/api/dashboard", require("./routes/dashboardRoutes"));
 app.use("/api/amc", require("./routes/amcRoutes"));
 app.use("/api/inventory", require("./routes/inventoryRoutes"));
 app.use("/api/reminders", require("./routes/reminderRoutes"));
+app.use("/api/tenants", require("./routes/tenantRoutes"));
 
 // Health check
 app.get("/api/health", (req, res) => {

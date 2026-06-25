@@ -34,6 +34,9 @@ async function getReminderData(tenant_id, { dueDays = DEFAULT_DUE_DAYS, amcDays 
   const today = isoDate(new Date());
   const dueSoonEnd = isoDate(new Date(Date.now() + dueDays * 86400000));
   const amcEnd = isoDate(new Date(Date.now() + amcDays * 86400000));
+  // Also catch contracts that expired recently but haven't been renewed yet —
+  // the renewal nudge shouldn't vanish the day a contract expires.
+  const amcExpiredFloor = isoDate(new Date(Date.now() - 30 * 86400000));
 
   const [svcDue, svcOver, amc] = await Promise.all([
     // Service due soon
@@ -55,19 +58,34 @@ async function getReminderData(tenant_id, { dueDays = DEFAULT_DUE_DAYS, amcDays 
       .lt("scheduled_date", today)
       .order("scheduled_date", { ascending: true }),
 
-    // AMC expiring soon (active, not yet expired, ending within window)
+    // AMC expiring soon OR recently expired & not renewed (renewal window).
+    // Not cancelled; end_date from 30 days ago up to amcDays ahead. We exclude
+    // already-renewed contracts in JS below (those that appear as renewed_from).
     supabaseAdmin
       .from("amc_contracts")
-      .select("id, plan_name, end_date, customer_id, customers(name, phone)")
+      .select("id, plan_name, end_date, customer_id, renewed_from, customers(name, phone)")
       .eq("tenant_id", tenant_id)
-      .eq("status", "active")
-      .gte("end_date", today)
+      .neq("status", "cancelled")
+      .gte("end_date", amcExpiredFloor)
       .lte("end_date", amcEnd)
       .order("end_date", { ascending: true }),
   ]);
 
   const err = svcDue.error || svcOver.error || amc.error;
   if (err) throw new Error(err.message);
+
+  // Exclude contracts that have ALREADY been renewed (another contract points to
+  // them via renewed_from) — no need to nudge a renewal that already happened.
+  const renewedIds = new Set();
+  {
+    const { data: renewals } = await supabaseAdmin
+      .from("amc_contracts")
+      .select("renewed_from")
+      .eq("tenant_id", tenant_id)
+      .not("renewed_from", "is", null);
+    for (const r of renewals || []) renewedIds.add(r.renewed_from);
+  }
+  if (amc.data) amc.data = amc.data.filter((c) => !renewedIds.has(c.id));
 
   // Business name for message templates ("…from {business_name}").
   const { data: tenant } = await supabaseAdmin

@@ -12,6 +12,7 @@ router.post("/generate-bill", controller.generateBill);
 router.get("/:id", controller.getById);
 router.post("/", controller.create);
 router.put("/:id", controller.update);
+router.delete("/:id", controller.remove);
 router.patch("/:id/complete", controller.markCompleted);
 
 module.exports = router;

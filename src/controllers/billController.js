@@ -150,4 +150,4 @@ async function markPaid(req, res) {
   res.json(data);
 }
 
-module.exports = { getAll, getById, create, markPaid };
+module.exports = { getAll, getById, create, markPaid, insertBillWithUniqueNumber };
