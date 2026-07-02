@@ -43,6 +43,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'owner';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS expo_push_token TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_prefs JSONB DEFAULT '{}'::jsonb;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();
 
 -- 3. CUSTOMERS
@@ -120,6 +123,14 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS title TEXT;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS body TEXT;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ DEFAULT now();
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'sent';
+-- Notification Center backbone columns.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'system';
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'default';
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS deep_link JSONB;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
+-- System notifications (digest, low stock) aren't tied to a customer.
+ALTER TABLE notifications ALTER COLUMN customer_id DROP NOT NULL;
 
 -- 8. AMC CONTRACTS  (the table that was missing auto_schedule)
 CREATE TABLE IF NOT EXISTS amc_contracts (

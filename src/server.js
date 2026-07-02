@@ -48,6 +48,7 @@ app.use("/api/amc", require("./routes/amcRoutes"));
 app.use("/api/inventory", require("./routes/inventoryRoutes"));
 app.use("/api/reminders", require("./routes/reminderRoutes"));
 app.use("/api/tenants", require("./routes/tenantRoutes"));
+app.use("/api/me", require("./routes/meRoutes"));
 
 // Health check
 app.get("/api/health", (req, res) => {
@@ -81,6 +82,11 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT} (env=${NODE_ENV})`);
 });
+
+// Schedule the daily staff reminder push (9 AM IST) + ops alerts (9:15 AM IST).
+// Started after listen so a scheduler failure can't stop the API from serving.
+require("./cron/dailyReminderPush").start();
+require("./cron/dailyOpsAlerts").start();
 
 function shutdown(signal) {
   console.log(`Received ${signal}, shutting down gracefully...`);

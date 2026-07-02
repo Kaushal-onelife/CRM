@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS users (
 );
 -- avatar_url for existing databases (idempotent backfill)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+-- Expo push token for staff device notifications (daily due/overdue reminders).
+-- One token per user device; updated on each app launch. NULL until registered.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS expo_push_token TEXT;
+-- Per-user push preferences by category. Missing/true = push enabled; false =
+-- muted (still lands in the in-app inbox, just no device push). e.g.
+-- {"money":true,"service":true,"amc":true,"reminder":true}
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_prefs JSONB DEFAULT '{}'::jsonb;
 
 -- 3. CUSTOMERS (end customers of the business)
 CREATE TABLE IF NOT EXISTS customers (
@@ -103,18 +110,43 @@ CREATE TABLE IF NOT EXISTS bill_items (
   total NUMERIC(10,2) NOT NULL
 );
 
--- 7. NOTIFICATIONS LOG
+-- 7. NOTIFICATIONS  (in-app Notification Center backbone + delivery audit log)
+-- Each row is a persistent notification a staff user can see in the inbox.
+-- customer_id is nullable — system notifications (e.g. daily digest, low stock)
+-- aren't tied to a specific customer.
 CREATE TABLE IF NOT EXISTS notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id),
-  customer_id UUID NOT NULL REFERENCES customers(id),
+  -- Target staff user. NULL = tenant-wide (every staff member sees it).
+  user_id UUID REFERENCES users(id),
+  customer_id UUID REFERENCES customers(id),
   service_id UUID REFERENCES services(id),
   type TEXT NOT NULL,
+  -- Grouping for channels / settings toggles: 'money' | 'service' | 'amc' |
+  -- 'inventory' | 'reminder' | 'system'
+  category TEXT DEFAULT 'system',
+  -- Delivery/urgency tier: 'high' | 'default' | 'low' (drives Android channel).
+  priority TEXT DEFAULT 'default',
   title TEXT NOT NULL,
   body TEXT NOT NULL,
+  -- Where a tap navigates, e.g. {"screen":"Services","params":{"id":"..."}}.
+  deep_link JSONB,
+  -- Read state for the in-app inbox. NULL = unread.
+  read_at TIMESTAMPTZ,
   sent_at TIMESTAMPTZ DEFAULT now(),
   status TEXT DEFAULT 'sent'
 );
+-- Backfill columns for existing databases (idempotent) + relax customer_id.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id);
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'system';
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'default';
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS deep_link JSONB;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
+ALTER TABLE notifications ALTER COLUMN customer_id DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_notifications_tenant_sent
+  ON notifications(tenant_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_unread
+  ON notifications(tenant_id, read_at);
 
 -- 8. AMC CONTRACTS (Annual Maintenance Contracts)
 -- Status: 'active' (default), 'expired', 'cancelled'

@@ -1,5 +1,6 @@
 const { supabaseAdmin } = require("../config/supabase");
 const { sendDbError } = require("../utils/dbError");
+const notify = require("../utils/notificationEvents");
 
 const MAX_LIMIT = 100;
 
@@ -120,6 +121,21 @@ async function create(req, res) {
     .single();
 
   if (error) return sendDbError(res, error, { fk: "The selected customer no longer exists." });
+
+  // Notify the assignee when a service is created already assigned to someone.
+  if (data.assigned_to) {
+    const { data: cust } = await supabaseAdmin
+      .from("customers")
+      .select("name")
+      .eq("id", data.customer_id)
+      .maybeSingle();
+    notify.serviceAssigned({
+      tenant_id,
+      service: data,
+      customer_name: cust?.name || "",
+      assigned_to: data.assigned_to,
+    });
+  }
 
   res.status(201).json(data);
 }
@@ -312,6 +328,13 @@ async function markCompleted(req, res) {
     }
     // Note: services_used is no longer incremented here — it's computed live from
     // completed AMC-linked visits in amcController (self-healing, no drift).
+
+    // Notify staff the visit is done (quiet confirmation).
+    notify.serviceCompleted({
+      tenant_id,
+      service: data,
+      customer_name: data.customers?.name || "",
+    });
 
     res.json({
       service: data,

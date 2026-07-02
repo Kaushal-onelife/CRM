@@ -1,8 +1,21 @@
 const { supabaseAdmin } = require("../config/supabase");
 const { sendDbError } = require("../utils/dbError");
 const { insertBillWithUniqueNumber } = require("./billController");
+const notify = require("../utils/notificationEvents");
 
 const MAX_LIMIT = 100;
+
+// Best-effort customer name lookup for notification copy.
+async function amcCustomerName(tenant_id, customer_id) {
+  if (!customer_id) return "";
+  const { data } = await supabaseAdmin
+    .from("customers")
+    .select("name")
+    .eq("id", customer_id)
+    .eq("tenant_id", tenant_id)
+    .maybeSingle();
+  return data?.name || "";
+}
 
 // Generate a bill for an AMC contract (on create or renew) — mirrors the
 // service->bill flow: one line item for the AMC plan, total = contract amount,
@@ -247,6 +260,13 @@ async function create(req, res) {
   // Auto-generate the AMC bill (best-effort; contract already created).
   const { bill } = await generateAmcBill(tenant_id, contract, { payment_status, payment_method });
 
+  // Notify staff the contract is active (quiet confirmation).
+  notify.amcActivated({
+    tenant_id,
+    amc: contract,
+    customer_name: await amcCustomerName(tenant_id, contract.customer_id),
+  });
+
   res.status(201).json({ ...contract, bill: bill || null });
 }
 
@@ -351,9 +371,22 @@ async function checkExpired(req, res) {
     .eq("tenant_id", tenant_id)
     .eq("status", "active")
     .lt("end_date", today)
-    .select("id");
+    .select("id, plan_name, customer_id, end_date, customers(name)");
 
   if (error) return res.status(400).json({ error: error.message });
+
+  // Notify once per contract that just expired (renewal opportunity). The daily
+  // cron (dailyOpsAlerts.sweepExpiredAmc) also notifies amc_expired, but the
+  // atomic status='active' -> 'expired' flip above means each contract is caught
+  // by exactly one of the two — never both. The status flip is the de-dupe lock.
+  for (const amc of data || []) {
+    notify.amcExpired({
+      tenant_id,
+      amc,
+      customer_name: amc.customers?.name || "",
+    });
+  }
+
   res.json({ expired_count: data ? data.length : 0 });
 }
 
@@ -444,6 +477,13 @@ async function renew(req, res) {
     payment_status: b.payment_status,
     payment_method: b.payment_method,
     renewal: true,
+  });
+
+  // Notify staff the renewal went through.
+  notify.amcRenewed({
+    tenant_id,
+    newAmc: contract,
+    customer_name: await amcCustomerName(tenant_id, contract.customer_id),
   });
 
   res.status(201).json({ ...contract, bill: bill || null });

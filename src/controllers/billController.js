@@ -1,5 +1,18 @@
 const { supabaseAdmin } = require("../config/supabase");
 const { sendDbError } = require("../utils/dbError");
+const notify = require("../utils/notificationEvents");
+
+// Small helper: look up a customer's name for notification copy (best-effort).
+async function customerName(tenant_id, customer_id) {
+  if (!customer_id) return "";
+  const { data } = await supabaseAdmin
+    .from("customers")
+    .select("name")
+    .eq("id", customer_id)
+    .eq("tenant_id", tenant_id)
+    .maybeSingle();
+  return data?.name || "";
+}
 
 const MAX_LIMIT = 100;
 
@@ -126,6 +139,14 @@ async function create(req, res) {
   if (itemsError)
     return sendDbError(res, itemsError, { fallback: "Couldn't save bill items. Please try again." });
 
+  // Notify: payment received (paid on the spot) or a new unpaid bill to chase.
+  const name = await customerName(tenant_id, bill.customer_id);
+  if (isPaid) {
+    notify.paymentReceived({ tenant_id, bill, customer_name: name });
+  } else {
+    notify.billCreatedUnpaid({ tenant_id, bill, customer_name: name });
+  }
+
   res.status(201).json({ ...bill, items: billItems });
 }
 
@@ -146,6 +167,10 @@ async function markPaid(req, res) {
     .single();
 
   if (error) return sendDbError(res, error);
+
+  // Notify: payment received.
+  const name = await customerName(tenant_id, data.customer_id);
+  notify.paymentReceived({ tenant_id, bill: data, customer_name: name });
 
   res.json(data);
 }
