@@ -49,7 +49,7 @@ async function insertBillWithUniqueNumber(tenant_id, baseInsert) {
 
 async function getAll(req, res) {
   const { tenant_id } = req.user;
-  const { payment_status, customer_id, page = 1 } = req.query;
+  const { payment_status, customer_id, from, to, page = 1 } = req.query;
   const limit = Math.min(parseInt(req.query.limit, 10) || 20, MAX_LIMIT);
   const offset = (page - 1) * limit;
 
@@ -62,6 +62,11 @@ async function getAll(req, res) {
 
   if (payment_status) query = query.eq("payment_status", payment_status);
   if (customer_id) query = query.eq("customer_id", customer_id);
+  // Date range on the bill's created_at (used by the Revenue screen's
+  // month drill-down). `to` is exclusive so callers pass the first day of the
+  // next month without worrying about time-of-day.
+  if (from) query = query.gte("created_at", from);
+  if (to) query = query.lt("created_at", to);
 
   const { data, count, error } = await query;
 

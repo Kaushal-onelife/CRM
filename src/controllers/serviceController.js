@@ -29,6 +29,108 @@ function pick(body, fields) {
   return out;
 }
 
+// Build the bill line items from a completed service's charge + parts.
+function buildBillItems(service) {
+  const items = [];
+  if (service.service_charge > 0) {
+    items.push({
+      description: `Service Charge - ${service.service_type.replace(/_/g, " ")}`,
+      quantity: 1,
+      unit_price: parseFloat(service.service_charge),
+      total: parseFloat(service.service_charge),
+    });
+  }
+  if (service.parts_replaced && service.parts_replaced.length > 0) {
+    for (const part of service.parts_replaced) {
+      const qty = parseInt(part.quantity) || 1;
+      const price = parseFloat(part.cost) || 0;
+      items.push({
+        description: part.name,
+        quantity: qty,
+        unit_price: price,
+        total: qty * price,
+      });
+    }
+  }
+  return items;
+}
+
+// Create exactly one bill for a completed service. IDEMPOTENT: if a bill already
+// exists for this service_id we return that one instead of inserting a duplicate,
+// so calling this from both markCompleted and the manual generate-bill path (or
+// twice) can never inflate revenue. Returns { bill, items, alreadyExisted } or
+// throws with a .status for the caller to surface.
+async function createBillForService(tenant_id, service, { payment_status, payment_method } = {}) {
+  // Guard: one bill per service.
+  const { data: existing } = await supabaseAdmin
+    .from("bills")
+    .select("*")
+    .eq("tenant_id", tenant_id)
+    .eq("service_id", service.id)
+    .maybeSingle();
+  if (existing) return { bill: existing, items: null, alreadyExisted: true };
+
+  const items = buildBillItems(service);
+  const amount = items.reduce((sum, item) => sum + item.total, 0);
+  const total = amount; // no tax for now
+  const isPaid = payment_status === "paid";
+  const today = new Date().toISOString().split("T")[0];
+  const datePrefix = today.replace(/-/g, "");
+
+  const { count: existingCount } = await supabaseAdmin
+    .from("bills")
+    .select("*", { count: "exact", head: true })
+    .eq("tenant_id", tenant_id);
+
+  // Race-safe unique bill_number: retry on the unique-violation (23505).
+  let bill = null;
+  let billError = null;
+  let seq = (existingCount || 0) + 1;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const billNumber = `BILL-${datePrefix}-${String(seq).padStart(4, "0")}`;
+    const insertResult = await supabaseAdmin
+      .from("bills")
+      .insert({
+        tenant_id,
+        customer_id: service.customer_id,
+        service_id: service.id,
+        bill_number: billNumber,
+        amount,
+        tax: 0,
+        total,
+        payment_status: payment_status || "unpaid",
+        payment_method: isPaid ? payment_method : null,
+        paid_date: isPaid ? today : null,
+      })
+      .select()
+      .single();
+
+    if (!insertResult.error) {
+      bill = insertResult.data;
+      break;
+    }
+    if (insertResult.error.code === "23505") {
+      seq += 1;
+      continue;
+    }
+    billError = insertResult.error;
+    break;
+  }
+
+  if (!bill) {
+    const err = new Error(billError ? billError.message : "Could not generate bill number");
+    err.status = 400;
+    throw err;
+  }
+
+  if (items.length > 0) {
+    const billItems = items.map((item) => ({ ...item, bill_id: bill.id }));
+    await supabaseAdmin.from("bill_items").insert(billItems);
+  }
+
+  return { bill, items, alreadyExisted: false };
+}
+
 async function getAll(req, res) {
   const { tenant_id } = req.user;
   const { status, customer_id, from, to, search, page = 1 } = req.query;
@@ -329,6 +431,21 @@ async function markCompleted(req, res) {
     // Note: services_used is no longer incremented here — it's computed live from
     // completed AMC-linked visits in amcController (self-healing, no drift).
 
+    // Auto-create the bill so every completed service is captured in revenue —
+    // no skippable manual step. Idempotent (one bill per service). A billing
+    // failure must NOT roll back the completion (the visit really happened), so
+    // we log and continue; the manual generate-bill path remains as a backstop.
+    let bill = null;
+    try {
+      const result = await createBillForService(tenant_id, data, {
+        payment_status,
+        payment_method,
+      });
+      bill = result.bill;
+    } catch (billErr) {
+      console.error("markCompleted: auto-bill failed:", billErr);
+    }
+
     // Notify staff the visit is done (quiet confirmation).
     notify.serviceCompleted({
       tenant_id,
@@ -338,6 +455,7 @@ async function markCompleted(req, res) {
 
     res.json({
       service: data,
+      bill, // the auto-created (or existing) bill, or null if billing failed
       amount: totalAmount,
       service_charge: parseFloat(service_charge) || 0,
       parts_total: partsTotal,
@@ -368,87 +486,25 @@ async function generateBill(req, res) {
     return res.status(400).json({ error: "Service must be completed first" });
   }
 
-  // Build bill items from parts + service charge
-  const items = [];
-  if (service.service_charge > 0) {
-    items.push({
-      description: `Service Charge - ${service.service_type.replace(/_/g, " ")}`,
-      quantity: 1,
-      unit_price: parseFloat(service.service_charge),
-      total: parseFloat(service.service_charge),
+  // Idempotent: returns the existing bill if one was already auto-created on
+  // completion, otherwise creates it. Either way the caller gets a single bill.
+  let bill;
+  try {
+    const result = await createBillForService(tenant_id, service, {
+      payment_status,
+      payment_method,
     });
-  }
-  if (service.parts_replaced && service.parts_replaced.length > 0) {
-    for (const part of service.parts_replaced) {
-      const qty = parseInt(part.quantity) || 1;
-      const price = parseFloat(part.cost) || 0;
-      items.push({
-        description: part.name,
-        quantity: qty,
-        unit_price: price,
-        total: qty * price,
-      });
-    }
-  }
-
-  const amount = items.reduce((sum, item) => sum + item.total, 0);
-  const total = amount; // no tax for now
-
-  // Create the bill (race-safe unique bill_number)
-  const isPaid = payment_status === "paid";
-  const datePrefix = new Date().toISOString().split("T")[0].replace(/-/g, "");
-  const { count: existingCount } = await supabaseAdmin
-    .from("bills")
-    .select("*", { count: "exact", head: true })
-    .eq("tenant_id", tenant_id);
-
-  let bill = null;
-  let billError = null;
-  let seq = (existingCount || 0) + 1;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const billNumber = `BILL-${datePrefix}-${String(seq).padStart(4, "0")}`;
-    const insertResult = await supabaseAdmin
-      .from("bills")
-      .insert({
-        tenant_id,
-        customer_id: service.customer_id,
-        service_id: service.id,
-        bill_number: billNumber,
-        amount,
-        tax: 0,
-        total,
-        payment_status: payment_status || "unpaid",
-        payment_method: isPaid ? payment_method : null,
-        paid_date: isPaid ? new Date().toISOString().split("T")[0] : null,
-      })
-      .select()
-      .single();
-
-    if (!insertResult.error) {
-      bill = insertResult.data;
-      break;
-    }
-    if (insertResult.error.code === "23505") {
-      seq += 1;
-      continue;
-    }
-    billError = insertResult.error;
-    break;
-  }
-
-  if (!bill) {
+    bill = result.bill;
+    // If it already existed, re-fetch its items so the response is complete.
+    const items = result.items ?? (
+      await supabaseAdmin.from("bill_items").select("*").eq("bill_id", bill.id)
+    ).data ?? [];
     return res
-      .status(400)
-      .json({ error: billError ? billError.message : "Could not generate bill number" });
+      .status(result.alreadyExisted ? 200 : 201)
+      .json({ ...bill, items, customer: service.customers });
+  } catch (err) {
+    return res.status(err.status || 400).json({ error: err.message });
   }
-
-  // Insert bill items
-  if (items.length > 0) {
-    const billItems = items.map((item) => ({ ...item, bill_id: bill.id }));
-    await supabaseAdmin.from("bill_items").insert(billItems);
-  }
-
-  res.status(201).json({ ...bill, items, customer: service.customers });
 }
 
 module.exports = { getAll, getById, getCustomerHistory, create, update, remove, markCompleted, generateBill };
