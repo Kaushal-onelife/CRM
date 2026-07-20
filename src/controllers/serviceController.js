@@ -29,17 +29,11 @@ function pick(body, fields) {
   return out;
 }
 
-// Build the bill line items from a completed service's charge + parts.
+// Build the bill line items from a completed service's parts + charge. Parts are
+// listed first; the service charge always comes last so it reads as the closing
+// line on the bill.
 function buildBillItems(service) {
   const items = [];
-  if (service.service_charge > 0) {
-    items.push({
-      description: `Service Charge - ${service.service_type.replace(/_/g, " ")}`,
-      quantity: 1,
-      unit_price: parseFloat(service.service_charge),
-      total: parseFloat(service.service_charge),
-    });
-  }
   if (service.parts_replaced && service.parts_replaced.length > 0) {
     for (const part of service.parts_replaced) {
       const qty = parseInt(part.quantity) || 1;
@@ -51,6 +45,14 @@ function buildBillItems(service) {
         total: qty * price,
       });
     }
+  }
+  if (service.service_charge > 0) {
+    items.push({
+      description: "Service Charge",
+      quantity: 1,
+      unit_price: parseFloat(service.service_charge),
+      total: parseFloat(service.service_charge),
+    });
   }
   return items;
 }
