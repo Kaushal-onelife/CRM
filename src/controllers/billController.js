@@ -147,9 +147,9 @@ async function create(req, res) {
   // Notify: payment received (paid on the spot) or a new unpaid bill to chase.
   const name = await customerName(tenant_id, bill.customer_id);
   if (isPaid) {
-    notify.paymentReceived({ tenant_id, bill, customer_name: name });
+    notify.paymentReceived({ tenant_id, bill, customer_name: name, actor_id: req.user.id });
   } else {
-    notify.billCreatedUnpaid({ tenant_id, bill, customer_name: name });
+    notify.billCreatedUnpaid({ tenant_id, bill, customer_name: name, actor_id: req.user.id });
   }
 
   res.status(201).json({ ...bill, items: billItems });
@@ -175,7 +175,7 @@ async function markPaid(req, res) {
 
   // Notify: payment received.
   const name = await customerName(tenant_id, data.customer_id);
-  notify.paymentReceived({ tenant_id, bill: data, customer_name: name });
+  notify.paymentReceived({ tenant_id, bill: data, customer_name: name, actor_id: req.user.id });
 
   res.json(data);
 }

@@ -453,6 +453,7 @@ async function markCompleted(req, res) {
       tenant_id,
       service: data,
       customer_name: data.customers?.name || "",
+      actor_id: req.user.id,
     });
 
     res.json({

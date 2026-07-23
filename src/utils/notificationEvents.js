@@ -22,11 +22,12 @@ async function emit(payload) {
 // ── Money ────────────────────────────────────────────────────────────────────
 
 // A bill was marked paid / created as paid.
-function paymentReceived({ tenant_id, bill, customer_name }) {
+function paymentReceived({ tenant_id, bill, customer_name, actor_id }) {
   return emit({
     tenant_id,
     type: "payment_received",
     category: "money",
+    actor_id, // don't push the staff member who took the payment
     title: "Payment received",
     body: `${money(bill.total)} received${customer_name ? ` from ${customer_name}` : ""} (${bill.bill_number}).`,
     customer_id: bill.customer_id,
@@ -35,11 +36,12 @@ function paymentReceived({ tenant_id, bill, customer_name }) {
 }
 
 // An unpaid bill was created — someone owes money.
-function billCreatedUnpaid({ tenant_id, bill, customer_name }) {
+function billCreatedUnpaid({ tenant_id, bill, customer_name, actor_id }) {
   return emit({
     tenant_id,
     type: "bill_unpaid",
     category: "money",
+    actor_id, // don't push the staff member who created the bill
     title: "New unpaid bill",
     body: `${money(bill.total)} due${customer_name ? ` from ${customer_name}` : ""} (${bill.bill_number}).`,
     customer_id: bill.customer_id,
@@ -65,11 +67,12 @@ function serviceAssigned({ tenant_id, service, customer_name, assigned_to }) {
 }
 
 // A service was marked completed.
-function serviceCompleted({ tenant_id, service, customer_name }) {
+function serviceCompleted({ tenant_id, service, customer_name, actor_id }) {
   return emit({
     tenant_id,
     type: "service_completed",
     category: "service",
+    actor_id, // don't push the staff member who marked it done
     priority: "low", // confirmation — quiet
     title: "Service completed",
     body: `${service.service_type || "Service"}${customer_name ? ` for ${customer_name}` : ""} marked done${service.amount ? ` — ${money(service.amount)}` : ""}.`,
@@ -84,11 +87,12 @@ function serviceCompleted({ tenant_id, service, customer_name }) {
 // ── AMC ──────────────────────────────────────────────────────────────────────
 
 // An AMC contract was activated (created).
-function amcActivated({ tenant_id, amc, customer_name }) {
+function amcActivated({ tenant_id, amc, customer_name, actor_id }) {
   return emit({
     tenant_id,
     type: "amc_activated",
     category: "amc",
+    actor_id, // don't push the staff member who created the contract
     priority: "low",
     title: "AMC activated",
     body: `${amc.plan_name}${customer_name ? ` for ${customer_name}` : ""} — ${amc.total_services} visits through ${amc.end_date}.`,
@@ -111,11 +115,12 @@ function amcExpired({ tenant_id, amc, customer_name }) {
 }
 
 // An AMC was renewed into a new contract.
-function amcRenewed({ tenant_id, newAmc, customer_name }) {
+function amcRenewed({ tenant_id, newAmc, customer_name, actor_id }) {
   return emit({
     tenant_id,
     type: "amc_renewed",
     category: "amc",
+    actor_id, // don't push the staff member who renewed the contract
     priority: "low",
     title: "AMC renewed",
     body: `${newAmc.plan_name}${customer_name ? ` for ${customer_name}` : ""} renewed through ${newAmc.end_date}.`,

@@ -78,6 +78,9 @@ function pushEnabledFor(user, category) {
 //   customer_id, service_id  optional links
 //   deep_link   { screen, params } — where a tap navigates
 //   push          set false to store in-inbox only (no device push)
+//   actor_id      the user who performed the action. They still get the inbox
+//                 row (audit trail) but NO device push — you shouldn't buzz
+//                 someone about a thing they just did themselves.
 //   dedupeService if set to a service_id, skips creation when a notification of
 //                 the same (tenant_id, type, service_id) already exists TODAY —
 //                 prevents a duplicate ping if the same service event re-fires
@@ -90,6 +93,7 @@ async function createNotification({
   category = "system",
   priority,
   target_user_id = null,
+  actor_id = null,
   customer_id = null,
   service_id = null,
   deep_link = null,
@@ -145,9 +149,11 @@ async function createNotification({
   }
 
   if (push) {
-    // Only push to users who haven't muted this category. The inbox row above
-    // is still created for everyone, so muting only silences the device buzz.
+    // Only push to users who haven't muted this category, and never push to the
+    // actor themselves (they triggered the action — the inbox row above is enough
+    // as an audit trail). Muting/self-exclusion only silences the device buzz.
     const tokens = recipients
+      .filter((u) => u.id !== actor_id)
       .filter((u) => pushEnabledFor(u, category))
       .map((u) => u.expo_push_token)
       .filter(Boolean);

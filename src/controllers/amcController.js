@@ -265,6 +265,7 @@ async function create(req, res) {
     tenant_id,
     amc: contract,
     customer_name: await amcCustomerName(tenant_id, contract.customer_id),
+    actor_id: req.user.id,
   });
 
   res.status(201).json({ ...contract, bill: bill || null });
@@ -484,6 +485,7 @@ async function renew(req, res) {
     tenant_id,
     newAmc: contract,
     customer_name: await amcCustomerName(tenant_id, contract.customer_id),
+    actor_id: req.user.id,
   });
 
   res.status(201).json({ ...contract, bill: bill || null });
